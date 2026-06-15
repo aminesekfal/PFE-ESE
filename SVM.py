@@ -1,6 +1,6 @@
 # =========================================================
 # ECG MIT-BIH - SVM WITH MORPHOLOGICAL FEATURE EXTRACTION
-# Performance Evaluation per N Subsets with Custom Grid Search
+# Performance Evaluation per N Subsets (200, 400, 600) with Dashboards
 # =========================================================
 
 import os
@@ -33,8 +33,8 @@ label_map = {cls: idx for idx, cls in enumerate(CLASSES_LIST)}
 WINDOW = 150  
 FS = 360      
 
-# Dernaha khawia hna bech n'initialisouha dynamique l-taht hda N_values
-tables_data_store = {}
+# Master storage to hold data for the final structural summary tables
+tables_data_store = {200: {}, 400: {}, 600: {}}
 
 # =========================================================
 # SIGNAL PROCESSING & FEATURE EXTRACTION ENGINE
@@ -82,6 +82,10 @@ def extract_morphological_features(beat, fs=360):
         pr_interval, qrs_duration, qt_interval      
     ]
 
+# =========================================================
+# METRICS COMPLIANCE EXTRACTOR
+# =========================================================
+
 def extract_table_metrics(cm, classes_list):
     total_samples = cm.sum()
     row_sums = cm.sum(axis=1)
@@ -98,11 +102,66 @@ def extract_table_metrics(cm, classes_list):
     return global_acc, global_err, class_breakdown
 
 # =========================================================
+# UNIFIED VISUALIZATION DASHBOARD
+# =========================================================
+
+def plot_evaluation_dashboard(cm, classes, title, global_acc, global_err, class_breakdown):
+    cm = np.array(cm)
+    row_sums = cm.sum(axis=1)
+    total_samples = cm.sum()
+    
+    labeled_classes = [f"{cls}\n({int(row_sums[i])})" for i, cls in enumerate(classes)]
+    cm_percent = np.divide(cm.astype('float'), row_sums[:, None], out=np.zeros_like(cm, dtype=float), where=row_sums[:, None] != 0)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7), gridspec_kw={'width_ratios': [1.1, 1.1]})
+
+    # --- Panel A: Confusion Matrix Matrix ---
+    im = ax1.imshow(cm, cmap='Blues')
+    ax1.set_xticks(np.arange(len(classes))); ax1.set_yticks(np.arange(len(classes)))
+    ax1.set_xticklabels(classes, weight='bold'); ax1.set_yticklabels(labeled_classes, weight='bold')
+    ax1.set_xlabel("Predicted Class", weight='bold')
+    ax1.set_ylabel("True Class (Sample Count)", weight='bold')
+    ax1.set_title(f"Confusion Matrix (Total Test N = {total_samples})", weight='bold', fontsize=11)
+
+    thresh = cm.max() * 0.5
+    for i in range(len(classes)):
+        for j in range(len(classes)):
+            color = "white" if cm[i, j] > thresh else "black"
+            ax1.text(j, i, f"{cm[i, j]}\n{cm_percent[i, j]*100:.1f}%", ha="center", va="center", color=color)
+    plt.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
+
+    # --- Panel B: Dynamic Sub-Configuration Table ---
+    ax2.axis('off')
+    target_classes = ['A', 'R', 'N', 'L', 'V']
+    
+    table_rows = [
+        ["Configuration", "global", "A", "R", "N", "L", "V"],
+        ["Accurcy", f"{global_acc:.3f}"] + [f"{class_breakdown[c]['Accuracy']:.3f}" for c in target_classes],
+        ["Erreur rate", f"{global_err:.3f}"] + [f"{class_breakdown[c]['ErrorRate']:.3f}" for c in target_classes]
+    ]
+    
+    rendered_table = ax2.table(cellText=table_rows, loc='center', cellLoc='center')
+    rendered_table.auto_set_font_size(False)
+    rendered_table.set_fontsize(11)
+    rendered_table.scale(1.0, 2.5)
+    
+    # Shade structural header block grey
+    for c_idx in range(len(table_rows[0])):
+        cell = rendered_table[0, c_idx]
+        cell.set_text_props(weight='bold')
+        cell.set_facecolor('#dcdcdc')
+    rendered_table[1, 0].set_text_props(weight='bold')
+    rendered_table[2, 0].set_text_props(weight='bold')
+
+    plt.suptitle(title, fontsize=13, weight='bold', y=0.98)
+    plt.tight_layout(); plt.show()
+
+# =========================================================
 # PIPELINE DATA PREPARATION
 # =========================================================
 
 features_list, labels_list = [], []
-print("Step 1: Processing signals and extracting morphological features... Please wait...")
+print("Step 1: Processing signals and extracting morphological features...")
 
 for rec in records:
     try:
@@ -127,39 +186,19 @@ X_train = scaler.fit_transform(X_train)
 X_test = scaler.transform(X_test)
 
 # =========================================================
-# NEW CUSTOM HYPERPARAMETER CONFIGURATIONS (UPDATED)
+# EXPERIMENTAL TRAINING LOOPS (SVM PARADIGM)
 # =========================================================
-N_values = [200, 500, 800]  # Zdna l-500 hna kima bghit
+N_values = [200, 400, 600]
 
-# FIX: Initialisation dynamique kamla bech mathandalech f l-KeyError
-tables_data_store = {N: {} for N in N_values}
+svm_configurations = [
+    {'label': 'Linear C=0.1', 'kernel': 'linear', 'C': 0.1, 'gamma': 'scale'},
+    {'label': 'Linear C=1.0', 'kernel': 'linear', 'C': 1.0, 'gamma': 'scale'},
+    {'label': 'Linear C=10.0', 'kernel': 'linear', 'C': 10.0, 'gamma': 'scale'},
+    {'label': 'RBF Gamma=0.01', 'kernel': 'rbf', 'C': 1.0, 'gamma': 0.01},
+    {'label': 'RBF Gamma=0.1', 'kernel': 'rbf', 'C': 1.0, 'gamma': 0.1},
+    {'label': 'RBF Gamma=1.0', 'kernel': 'rbf', 'C': 1.0, 'gamma': 1.0}
+]
 
-linear_C_values = [0.1, 1, 10, 100]
-rbf_C_values = [1, 10, 20]
-rbf_gamma_values = [0.01, 0.1, 1]
-
-svm_configurations = []
-
-# 1. Linear SVM Grid
-for c in linear_C_values:
-    svm_configurations.append({
-        'label': f'Linear C={c}', 
-        'kernel': 'linear', 
-        'C': c, 
-        'gamma': 'scale'
-    })
-
-# 2. RBF SVM Grid
-for c in rbf_C_values:
-    for g in rbf_gamma_values:
-        svm_configurations.append({
-            'label': f'RBF C={c} G={g}', 
-            'kernel': 'rbf', 
-            'C': c, 
-            'gamma': g
-        })
-
-# Core Training Loop (Silent Mode)
 for N in N_values:
     idx = []
     for cls_idx in range(5):
@@ -171,6 +210,7 @@ for N in N_values:
     
     for config in svm_configurations:
         label = config['label']
+        print(f"Evaluating Model Setup -> N={N} | {label}...")
         
         clf = SVC(kernel=config['kernel'], C=config['C'], gamma=config['gamma'], random_state=42)
         clf.fit(Xs, ys)
@@ -179,97 +219,66 @@ for N in N_values:
         
         g_acc, g_err, c_breakdown = extract_table_metrics(cm, CLASSES_LIST)
         
+        # Save metrics keyed by configuration label for final tables compilation
         tables_data_store[N][label] = {
             'global_acc': g_acc, 'global_err': g_err, 'classes': c_breakdown
         }
+        
+        # Display figures + micro-table concurrently per loop execution
+        plot_evaluation_dashboard(
+            cm, CLASSES_LIST, 
+            f"SVM Structural Configuration: Subset N={N} | Hyperparameter: {label}",
+            g_acc, g_err, c_breakdown
+        )
 
 # =========================================================
-# SEPARATE MASTER TABLES GENERATOR (SPACING OPTIMIZED)
+# FINAL STACKED PRESENTATION TABLES (IMAGE_CE8400.PNG REPLICA)
 # =========================================================
-print("\nProcessing Complete! Displaying separated clean reports for Linear and RBF...")
+print("\nProcessing complete. Generating final macro-comparison summary tables...")
 
 target_classes = ['A', 'R', 'N', 'L', 'V']
 
 for N in N_values:
+    macro_table_rows = []
     
-    # -----------------------------------------------------
-    # TABLE 1: LINEAR SVM PERFORMANCE REPORT
-    # -----------------------------------------------------
-    linear_table_rows = []
     for config in svm_configurations:
-        if config['kernel'] == 'linear':
-            label = config['label']
-            m_set = tables_data_store[N][label]
-            
-            linear_table_rows.append([f"{label}", "global", "A", "R", "N", "L", "V"])
-            
-            acc_row = ["Accurcy", f"{m_set['global_acc']:.3f}"]
-            for cls in target_classes:
-                acc_row.append(f"{m_set['classes'][cls]['Accuracy']:.3f}")
-            linear_table_rows.append(acc_row)
-            
-            err_row = ["Erreur rate", f"{m_set['global_err']:.3f}"]
-            for cls in target_classes:
-                err_row.append(f"{m_set['classes'][cls]['ErrorRate']:.3f}")
-            linear_table_rows.append(err_row)
+        label = config['label']
+        m_set = tables_data_store[N][label]
+        
+        # Row 1: Structural header band
+        macro_table_rows.append([f"{label}", "global", "A", "R", "N", "L", "V"])
+        
+        # Row 2: Accuracy Row
+        acc_row = ["Accurcy", f"{m_set['global_acc']:.3f}"]
+        for cls in target_classes:
+            acc_row.append(f"{m_set['classes'][cls]['Accuracy']:.3f}")
+        macro_table_rows.append(acc_row)
+        
+        # Row 3: Error Rate Row
+        err_row = ["Erreur rate", f"{m_set['global_err']:.3f}"]
+        for cls in target_classes:
+            err_row.append(f"{m_set['classes'][cls]['ErrorRate']:.3f}")
+        macro_table_rows.append(err_row)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    # Render Stacked Table Window
+    fig, ax = plt.subplots(figsize=(12, 8.5))
     ax.axis('off')
-    rendered_linear_table = ax.table(cellText=linear_table_rows, loc='center', cellLoc='center')
-    rendered_linear_table.auto_set_font_size(False)
-    rendered_linear_table.set_fontsize(10)
-    rendered_linear_table.scale(1.1, 1.6)
     
-    for r_idx, r_content in enumerate(linear_table_rows):
-        if "Linear" in str(r_content[0]):
+    rendered_macro_table = ax.table(cellText=macro_table_rows, loc='center', cellLoc='center')
+    rendered_macro_table.auto_set_font_size(False)
+    rendered_macro_table.set_fontsize(10)
+    rendered_macro_table.scale(1.1, 1.8)
+    
+    # Color structural sub-headers grey to match targets cleanly
+    for r_idx, r_content in enumerate(macro_table_rows):
+        if "Linear" in str(r_content[0]) or "RBF" in str(r_content[0]):
             for c_idx in range(len(r_content)):
-                cell = rendered_linear_table[r_idx, c_idx]
+                cell = rendered_macro_table[r_idx, c_idx]
                 cell.set_text_props(weight='bold')
                 cell.set_facecolor('#dcdcdc')
         else:
-            rendered_linear_table[r_idx, 0].set_text_props(weight='bold')
+            rendered_macro_table[r_idx, 0].set_text_props(weight='bold')
             
-    plt.title(f"LINEAR KERNEL SVM PERFORMANCE REPORT (N = {N})", weight='bold', fontsize=12, pad=10)
-    plt.tight_layout()
-    plt.show()
-
-    # -----------------------------------------------------
-    # TABLE 2: RBF SVM PERFORMANCE REPORT (ANTI-OVERLAP FIX)
-    # -----------------------------------------------------
-    rbf_table_rows = []
-    for config in svm_configurations:
-        if config['kernel'] == 'rbf':
-            label = config['label']
-            m_set = tables_data_store[N][label]
-            
-            rbf_table_rows.append([f"{label}", "global", "A", "R", "N", "L", "V"])
-            
-            acc_row = ["Accurcy", f"{m_set['global_acc']:.3f}"]
-            for cls in target_classes:
-                acc_row.append(f"{m_set['classes'][cls]['Accuracy']:.3f}")
-            rbf_table_rows.append(acc_row)
-            
-            err_row = ["Erreur rate", f"{m_set['global_err']:.3f}"]
-            for cls in target_classes:
-                err_row.append(f"{m_set['classes'][cls]['ErrorRate']:.3f}")
-            rbf_table_rows.append(err_row)
-
-    fig, ax = plt.subplots(figsize=(12, 12))
-    ax.axis('off')
-    rendered_rbf_table = ax.table(cellText=rbf_table_rows, loc='center', cellLoc='center')
-    rendered_rbf_table.auto_set_font_size(False)
-    rendered_rbf_table.set_fontsize(10) 
-    rendered_rbf_table.scale(1.1, 1.6)    
-    
-    for r_idx, r_content in enumerate(rbf_table_rows):
-        if "RBF" in str(r_content[0]):
-            for c_idx in range(len(r_content)):
-                cell = rendered_rbf_table[r_idx, c_idx]
-                cell.set_text_props(weight='bold')
-                cell.set_facecolor('#e2e8f0') 
-        else:
-            rendered_rbf_table[r_idx, 0].set_text_props(weight='bold')
-            
-    plt.title(f"RBF KERNEL SVM PERFORMANCE REPORT (N = {N})", weight='bold', fontsize=12, pad=10)
+    plt.title(f"CONSOLIDATED PERFORMANCE PROFILE MATRIX: DATASET SUBSET N = {N}", weight='bold', fontsize=12, pad=5)
     plt.tight_layout()
     plt.show()
