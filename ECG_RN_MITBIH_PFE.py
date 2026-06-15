@@ -1,6 +1,6 @@
 # =========================================================
-# ECG MIT-BIH - MLP (RN) WITH MORPHOLOGICAL FEATURE EXTRACTION
-# Performance Evaluation per N Subsets (200, 400, 600)
+# ECG MIT-BIH - MLP (RN) EXPERIMENTAL METRICS BENCHMARK
+# Structured Engine for College Final Project Evaluation
 # =========================================================
 
 import os
@@ -15,7 +15,7 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import accuracy_score, confusion_matrix
 
 # =========================================================
-# CONFIGURATION & PATHS
+# CONFIGURATION & GLOBAL VARIABLES
 # =========================================================
 dataset_path = r"C:\Users\amine\OneDrive\Desktop\PFE-CODE\mitbih"
 
@@ -33,11 +33,8 @@ label_map = {cls: idx for idx, cls in enumerate(CLASSES_LIST)}
 WINDOW = 150  
 FS = 360      
 
-# Master storage to hold data for the final three tables
-tables_data_store = {200: {}, 400: {}, 600: {}}
-
 # =========================================================
-# SIGNAL PROCESSING & FEATURE EXTRACTION ENGINE
+# SIGNAL PROCESSING & BIOMEDICAL FEATURE EXTRACTION
 # =========================================================
 
 def butter_bandpass(sig, fs=360, low=0.5, high=40):
@@ -51,6 +48,9 @@ def map_class(sym):
     return None
 
 def extract_morphological_features(beat, fs=360):
+    """
+    Extracts P-Q-R-S-T geometric features and clinical time intervals.
+    """
     r_idx = len(beat) // 2
     r_amp = beat[r_idx]
     
@@ -75,44 +75,102 @@ def extract_morphological_features(beat, fs=360):
     qrs_duration = ((s_idx - q_idx) / fs) * 1000
     qt_interval = ((t_idx - q_idx) / fs) * 1000
     
-    return [
+    features = [
         p_amp, q_amp, r_amp, s_amp, t_amp,          
         (r_idx - p_idx), (r_idx - q_idx),           
         (s_idx - r_idx), (t_idx - r_idx),
         pr_interval, qrs_duration, qt_interval      
     ]
+    return features
 
 # =========================================================
-# METRICS COMPLIANCE EXTRACTOR
+# CLINICAL EVALUATION DASHBOARD
 # =========================================================
 
-def extract_table_metrics(cm, classes_list):
-    """
-    Extracts accuracy metrics directly matching the matrix definitions:
-    Global Accuracy = Total Correct / Total Samples
-    Per-Class Accuracy = Individual True Positive rate (Recall) matching your bar charts
-    """
+def plot_evaluation_dashboard(cm, classes, title):
+    cm = np.array(cm)
     total_samples = cm.sum()
-    row_sums = cm.sum(axis=1)
+    num_classes = len(classes)
     
-    global_acc = np.diag(cm).sum() / total_samples if total_samples > 0 else 0.0
-    global_err = 1.0 - global_acc
+    # Storage arrays for comprehensive metrics
+    accuracies = []    # Per-Class Accuracy
+    precisions = []    # Precision (PPV)
+    recalls = []       # Recall / Sensitivity
+    f1_scores = []     # F1-Measure
     
-    class_breakdown = {}
-    for i, cls in enumerate(classes_list):
-        # Per-class diagonal performance (matches matrix % calculations)
-        acc = cm[i, i] / row_sums[i] if row_sums[i] > 0 else 0.0
-        err = 1.0 - acc
-        class_breakdown[cls] = {'Accuracy': acc, 'ErrorRate': err}
+    for i in range(num_classes):
+        tp = cm[i, i]
+        fn = np.sum(cm[i, :]) - tp
+        fp = np.sum(cm[:, i]) - tp
+        tn = total_samples - (tp + fn + fp)
         
-    return global_acc, global_err, class_breakdown
+        # Calculations
+        acc = (tp + tn) / total_samples if total_samples > 0 else 0.0
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * (prec * rec) / (prec + rec) if (prec + rec) > 0 else 0.0
+        
+        accuracies.append(acc * 100)
+        precisions.append(prec * 100)
+        recalls.append(rec * 100)
+        f1_scores.append(f1 * 100)
+
+    # Format labels to include total counts on the matrix axis
+    row_sums = cm.sum(axis=1)
+    axis_labels = [f"{cls}\n({int(row_sums[i])})" for i, cls in enumerate(classes)]
+    cm_percent = np.divide(cm.astype('float'), row_sums[:, None], out=np.zeros_like(cm, dtype=float), where=row_sums[:, None] != 0)
+
+    # Balanced 1:1 width display window
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7.5), gridspec_kw={'width_ratios': [1.1, 1.1]})
+
+    # --- Panel A: Confusion Matrix Matrix ---
+    im = ax1.imshow(cm, cmap='Blues')
+    ax1.set_xticks(np.arange(num_classes)); ax1.set_yticks(np.arange(num_classes))
+    ax1.set_xticklabels(classes, weight='bold'); ax1.set_yticklabels(axis_labels, weight='bold')
+    ax1.set_xlabel("Predicted Class Label", weight='bold', labelpad=10)
+    ax1.set_ylabel("True Class Label (Sample Vol.)", weight='bold', labelpad=10)
+    ax1.set_title(f"Confusion Matrix (N_test = {total_samples})", weight='bold', fontsize=12, pad=12)
+
+    thresh = cm.max() * 0.5
+    for i in range(num_classes):
+        for j in range(num_classes):
+            color = "white" if cm[i, j] > thresh else "black"
+            ax1.text(j, i, f"{cm[i, j]}\n({cm_percent[i, j]*100:.1f}%)", ha="center", va="center", color=color, fontsize=10)
+    
+    # --- Panel B: Academic Metrics Report Table ---
+    ax2.axis('off')
+    metric_data = []
+    for i in range(num_classes):
+        # Ordered variables precisely to align with table_columns
+        metric_data.append([
+            classes[i], 
+            f"{accuracies[i]:.1f}%",
+            f"{precisions[i]:.1f}%", 
+            f"{recalls[i]:.1f}%", 
+            f"{f1_scores[i]:.1f}%"
+        ])
+    
+    table_columns = ['Class', 'Accuracy', 'Precision', 'Recall', 'F1-Score']
+    metrics_table = ax2.table(cellText=metric_data, colLabels=table_columns, loc='center', cellLoc='center')
+    metrics_table.auto_set_font_size(False)
+    metrics_table.set_fontsize(11)
+    metrics_table.scale(1.0, 2.5) 
+    
+    # Elegant Slate Blue headers
+    for col_idx in range(len(table_columns)):
+        cell = metrics_table[0, col_idx]
+        cell.set_text_props(weight='bold', color='white')
+        cell.set_facecolor('#2c3e50')
+
+    plt.suptitle(title, fontsize=14, weight='bold', y=0.98)
+    plt.tight_layout(); plt.show()
 
 # =========================================================
-# PIPELINE DATA PREPARATION
+# DATA PREPARATION ENGINE
 # =========================================================
 
 features_list, labels_list = [], []
-print("Step 1: Processing signals and extracting morphological features...")
+print("[Engine] Commencing batch filtering and morphological extraction...")
 
 for rec in records:
     try:
@@ -123,13 +181,15 @@ for rec in records:
         for pos, sym in zip(ann.sample, ann.symbol):
             cls = map_class(sym)
             if cls and 0 <= pos - WINDOW and pos + WINDOW < len(sig):
-                features_list.append(extract_morphological_features(sig[pos - WINDOW : pos + WINDOW], fs=FS))
+                beat_segment = sig[pos - WINDOW : pos + WINDOW]
+                features_list.append(extract_morphological_features(beat_segment, fs=FS))
                 labels_list.append(cls)
     except: continue
 
 X = np.array(features_list)
 y = np.array([label_map[x] for x in labels_list])
 
+# Stratified split to maintain real-world imbalance in validation
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42, stratify=y)
 
 scaler = StandardScaler()
@@ -137,8 +197,9 @@ X_train = scaler.fit_transform(X_train)
 X_test = scaler.transform(X_test)
 
 # =========================================================
-# EXPERIMENTAL TRAINING LOOPS
+# MACHINE LEARNING CORE PIPELINE
 # =========================================================
+results = []
 M_values = [10, 20, 30]
 N_values = [200, 400, 600]
 
@@ -146,9 +207,9 @@ def run_mlp(Xtr, Xte, ytr, yte, M):
     clf = MLPClassifier(hidden_layer_sizes=(M,), activation='logistic', solver='adam', max_iter=400, random_state=42)
     clf.fit(Xtr, ytr)
     pred = clf.predict(Xte)
-    return confusion_matrix(yte, pred, labels=range(5))
+    return accuracy_score(yte, pred), confusion_matrix(yte, pred, labels=range(5))
 
-# Main loop across subsampled configurations
+# 1. Balanced Subsampling Experiments (N Constraints)
 for N in N_values:
     idx = []
     for cls_idx in range(5):
@@ -157,75 +218,23 @@ for N in N_values:
         idx.extend(np.random.choice(ids, min(N, len(ids)), replace=False))
     
     Xs, ys = X_train[idx], y_train[idx]
-    
     for M in M_values:
-        print(f"Running Processing Core: Subset N={N}, Neurons M={M}...")
-        cm = run_mlp(Xs, X_test, ys, y_test, M)
-        
-        # Calculate exactly what was visible in matrix boxes
-        g_acc, g_err, c_breakdown = extract_table_metrics(cm, CLASSES_LIST)
-        
-        # Save metrics directly matching the layout array requirements
-        tables_data_store[N][M] = {
-            'global_acc': g_acc, 'global_err': g_err, 'classes': c_breakdown
-        }
-        
-        # --- MATRIX PLOT VISUALS MUTED AS REQUESTED ---
-        # plot_evaluation_dashboard(cm, CLASSES_LIST, "...")
+        print(f"[Training Model] Hyperparameters: Subsampled N={N}, Hidden Neurons M={M}...")
+        acc, cm = run_mlp(Xs, X_test, ys, y_test, M)
+        results.append([N, M, acc, 1-acc])
+        plot_evaluation_dashboard(cm, CLASSES_LIST, f"Subsampled Configuration: N={N} | M={M}\nGlobal System Accuracy: {acc*100:.2f}%")
+
+# 2. Imbalanced Global Control Group Runs
+for M in M_values:
+    print(f"[Training Model] Hyperparameters: Full GLOBAL Dataset, Hidden Neurons M={M}...")
+    acc, cm = run_mlp(X_train, X_test, y_train, y_test, M)
+    results.append(['Global', M, acc, 1-acc])
+    plot_evaluation_dashboard(cm, CLASSES_LIST, f"GLOBAL Baseline Configuration: M={M}\nGlobal System Accuracy: {acc*100:.2f}%")
 
 # =========================================================
-# FINAL PRESENTATION TABLE GENERATOR (IMAGE_CE8400.PNG STYLE)
+# EXPERIMENTAL MATRIX REPORT
 # =========================================================
-print("\nProcessing complete. Generating specific performance tables...")
-
-# Columns aligned to your target layout order
-target_classes = ['A', 'R', 'N', 'L', 'V']
-
-for N in N_values:
-    table_rows = []
-    
-    for M in M_values:
-        m_set = tables_data_store[N][M]
-        
-        # Row 1: Structural header band
-        table_rows.append([f"M= {M}", "global", "A", "R", "N", "L", "V"])
-        
-        # Row 2: Matrix-matched Accuracy Row
-        acc_row = ["Accurcy", f"{m_set['global_acc']:.3f}"]
-        for cls in target_classes:
-            acc_row.append(f"{m_set['classes'][cls]['Accuracy']:.3f}")
-        table_rows.append(acc_row)
-        
-        # Row 3: Complementary Error Matrix Row
-        err_row = ["Erreur rate", f"{m_set['global_err']:.3f}"]
-        for cls in target_classes:
-            err_row.append(f"{m_set['classes'][cls]['ErrorRate']:.3f}")
-        table_rows.append(err_row)
-
-    # Render Table Window
-    fig, ax = plt.subplots(figsize=(11, 4.8))
-    ax.axis('off')
-    
-    rendered_table = ax.table(
-        cellText=table_rows, 
-        loc='center', 
-        cellLoc='center'
-    )
-    
-    rendered_table.auto_set_font_size(False)
-    rendered_table.set_fontsize(11)
-    rendered_table.scale(1.1, 2.0)
-    
-    # Shade structural divider blocks grey just like image_ce8400.png
-    for r_idx, r_content in enumerate(table_rows):
-        if "M=" in str(r_content[0]):
-            for c_idx in range(len(r_content)):
-                cell = rendered_table[r_idx, c_idx]
-                cell.set_text_props(weight='bold')
-                cell.set_facecolor('#dcdcdc')
-        else:
-            rendered_table[r_idx, 0].set_text_props(weight='bold')
-            
-    plt.title(f"PERFORMANCE REPORT PROFILE: SUBSET N = {N}", weight='bold', fontsize=12, pad=15)
-    plt.tight_layout()
-    plt.show()
+df = pd.DataFrame(results, columns=['Training Subset (N)', 'Hidden Neurons (M)', 'Global Accuracy', 'System Error Rate'])
+print("\n" + "="*60 + "\nFINAL RESEARCH METRICS LOG\n" + "="*60)
+print(df.to_string(index=False))
+print("="*60)
